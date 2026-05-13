@@ -1,0 +1,11 @@
+\section{Conclusiones}
+
+\noindent Se implementó exitosamente un controlador LQR para el péndulo rotatorio invertido QUBE-Servo, logrando que el sistema siguiera una referencia cuadrada de $\theta$ y mantuviera el péndulo estabilizado en la posición invertida. Los resultados experimentales mostraron un comportamiento consistente con la simulación, cumpliéndose las especificaciones de desempeño establecidas para el sobreimpulso, tiempo de establecimiento y error en estado estable.
+
+\noindent Las matrices de ponderación propuestas inicialmente en el prelaboratorio permitieron obtener directamente un desempeño satisfactorio tanto en simulación como en implementación real, por lo que no fue necesario realizar un ajuste adicional de $Q$ y $R$. Esto evidenció que la selección inicial de ponderaciones logró un equilibrio adecuado entre rapidez de respuesta, estabilidad y esfuerzo de control.
+
+\noindent El análisis de variación de las matrices $Q$ y $R$ permitió verificar experimentalmente el efecto de estas ponderaciones sobre la dinámica del sistema. Se observó que aumentar $Q$ o disminuir $R$ produce una respuesta más agresiva y rápida, pero con mayor esfuerzo de control; mientras que disminuir $Q$ o aumentar $R$ genera una respuesta más conservadora, reduciendo el consumo energético a costa de un menor desempeño dinámico.
+
+\noindent Asimismo, se implementó el algoritmo \textit{swing-up}, el cual permitió llevar automáticamente el péndulo desde la posición colgante hasta la región cercana a la posición invertida mediante la inyección progresiva de energía. Posteriormente, el controlador LQR tomó el control del sistema y estabilizó el péndulo alrededor del equilibrio invertido. Esto demostró el correcto funcionamiento de la lógica de conmutación entre el control swing-up y el balanceo LQR.
+
+\noindent Finalmente, el laboratorio permitió comprender de manera práctica la aplicación del control óptimo LQR y de estrategias de control no lineal basadas en energía para sistemas subactuados. Además, se evidenció la importancia de considerar efectos reales como fricción, ruido y dinámicas no modeladas al pasar de simulación a implementación física.
