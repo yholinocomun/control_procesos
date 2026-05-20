@@ -1,23 +1,14 @@
-# Python
-__pycache__/
-*.pyc
 
-# MATLAB
-*.asv
-slprj/
-
-# LaTeX
+# LaTeX basura
 *.aux
 *.log
 *.out
 *.toc
-*.fls
-*.fdb_latexmk
 *.synctex.gz
 
-# VSCode
-.vscode/
+# PDF generado
+*.pdf
 
-# Sistema
-.DS_Store
-Thumbs.db
+# Overleaf / compilación
+*.fls
+*.fdb_latexmk
