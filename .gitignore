@@ -12,3 +12,4 @@
 # Overleaf / compilación
 *.fls
 *.fdb_latexmk
+*.asv
