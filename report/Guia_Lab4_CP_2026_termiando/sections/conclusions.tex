@@ -1,0 +1,32 @@
+\section{Conclusiones}
+
+\begin{itemize}
+
+    \item El control de ratio de caudal funcionó correctamente para los tres
+    setpoints evaluados (0.4, 0.6 y 0.8), manteniendo la relación FT11/FT10
+    incluso ante la perturbación generada al reducir la apertura de EV11
+    de 40\,\% a 20\,\%.
+
+    \item La autosintonización mediante ``Optimización inicial'' de TIA Portal
+    entregó ganancias adecuadas para cada lazo, evitando la necesidad de
+    ajuste manual y reduciendo el tiempo de puesta en marcha del sistema.
+
+    \item El control en cascada demostró mejor rechazo a perturbaciones que un
+    controlador de nivel simple, ya que el lazo interno FC10 compensó
+    variaciones en el caudal antes de que estas afectaran el nivel del
+    tanque T-10.
+
+    \item Se verificó que el lazo secundario FC10 debe ser más rápido que el
+    lazo primario LC10 para garantizar la estabilidad de la cascada, lo cual
+    quedó reflejado en las ganancias obtenidas por la autosintonización.
+
+    \item La lógica de banda muerta implementada en el reto eliminó el llenado
+    gradual del tanque causado por el comando residual de FC10, demostrando
+    que los controladores PID industriales requieren lógicas complementarias
+    para un desempeño óptimo.
+
+    \item El uso del Trace de TIA Portal fue fundamental para validar el
+    comportamiento de ambos lazos, permitiendo verificar el seguimiento de
+    setpoint y analizar los transitorios de forma clara y precisa.
+
+\end{itemize}

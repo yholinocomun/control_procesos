@@ -12,11 +12,11 @@ clear; clc; close all;
 
 %% --------------------- CONFIGURACIÓN ------------------------
 % Ruta al CSV exportado de TIA Portal
-csv_file = "C:\A_CURSOS20261\CONTROL\Guia_lab4\datas_cp_lab4\Trace2_Parte1.csv";
+csv_file = "/home/yholi/control_procesos/labs/lab4/lab4_devguia/datas_cp_lab4";
 
 % Carpeta donde se guardarán las imágenes (debe coincidir con la ruta
 % que usa el documento LaTeX en \includegraphics{images/...})
-out_dir = "C:\A_CURSOS20261\CONTROL\Guia_lab4\images";
+out_dir = "/home/yholi/control_procesos/labs/lab4/lab4_devguia/images";
 
 % Periodo de muestreo del Trace (segundos). Verifica en TIA Portal:
 %   Trace -> Configuración -> Tiempo de ciclo de registro.
