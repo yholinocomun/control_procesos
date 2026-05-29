@@ -1,6 +1,7 @@
 function u = fcn(r, x)
 % =========================================================================
 % Controlador MPC (Model Predictive Control) con horizonte N generico
+% Compatible con bloques MATLAB Function de Simulink (sin cell arrays)
 %
 % ENTRADAS:
 %   r  - vector [2x1]: referencia deseada para los estados (setpoint)
@@ -10,32 +11,34 @@ function u = fcn(r, x)
 %   u  - escalar: accion de control optima para el instante actual
 %
 % DESCRIPCION:
-%   Resuelve un problema de optimizacion cuadratica (QP) en cada instante
-%   de muestreo para encontrar la secuencia optima de controles u_0..u_{N-1}
-%   y estados x_1..x_N, aplicando solo el primer control u_0.
-%   El vector de decision tiene la forma: z = [u_0; u_1;...;u_{N-1}; x_1;...;x_N]
-%   Tamano total de z: N*1 (controles) + N*2 (estados) = N*3
+%   Resuelve un QP en cada instante para obtener la secuencia optima
+%   z = [u_0; u_1;...; u_{N-1}; x_1; x_2;...; x_N]
+%   y aplica solo u_0 (principio receding-horizon del MPC).
+%   Tamano de z: nz = N*nu + N*nx = N + 2N = 3N
+%
+% NOTA SIMULINK:
+%   Este codigo NO usa cell arrays ni blkdiag dinamico porque el analizador
+%   estatico de Simulink (equivalente a MATLAB Coder) no puede inferir
+%   los tamanos de salida cuando se usan {R_blocks{:}}. En su lugar,
+%   todas las matrices se construyen con preallocacion + indexacion en loop,
+%   lo que permite al analizador determinar los tamanos en tiempo de compilacion.
 % =========================================================================
 
 % -------------------------------------------------------------------------
 % PARAMETRO: Horizonte de Prediccion
-%   Cambia solo este valor para ajustar el horizonte. Todo lo demas se
-%   construye automaticamente en funcion de N.
+%   Cambia SOLO este valor. Todo lo demas se calcula automaticamente.
 % -------------------------------------------------------------------------
-N = 5; % <-- Modifica este valor: N=1, N=10, N=20, etc.
+N = 5; % <-- Modifica aqui: N=1, N=3, N=10, N=20, etc.
 
-% Numero de estados del sistema (nx) y entradas de control (nu)
-nx = 2; % El sistema tiene 2 estados: x1 y x2
-nu = 1; % El sistema tiene 1 entrada de control: u
+% Dimensiones del sistema
+nx = 2; % Numero de estados (x1, x2)
+nu = 1; % Numero de entradas de control (u)
 
-% Tamano total del vector de decision z
-% Primero vienen los N controles, luego los N*nx estados
-nz = N * nu + N * nx; % = N + 2N = 3N
+% Tamano total del vector de decision z = [u_0..u_{N-1}; x_1..x_N]
+nz = N * nu + N * nx; % = 3*N
 
 % -------------------------------------------------------------------------
-% MODELO EN ESPACIO DE ESTADO DISCRETO: x_{k+1} = Ad*x_k + Bd*u_k
-% Ad: matriz de transicion de estados (como evolucionan los estados solos)
-% Bd: matriz de entrada (como afecta el control a los estados)
+% MODELO DISCRETO: x_{k+1} = Ad*x_k + Bd*u_k
 % -------------------------------------------------------------------------
 Ad = [0.9909  0.0861;
      -0.1722  0.7326];
@@ -44,149 +47,149 @@ Bd = [0.0045;
       0.0861];
 
 % -------------------------------------------------------------------------
-% MATRICES DE PESO DEL LQR (definen la funcion de costo J)
-% Q: penaliza el error en los estados (mayor Q => sigue mejor la referencia)
-% R: penaliza el esfuerzo de control (mayor R => control mas suave)
+% PESOS DE LA FUNCION DE COSTO
+%   Q penaliza error de estados (mayor => sigue mejor la referencia)
+%   R penaliza esfuerzo de control (mayor => senal de control mas suave)
 % -------------------------------------------------------------------------
-Q = diag([50, 1]); % Penaliza x1 (peso 50) y x2 (peso 1) por separado
-R = 0.1;           % Penaliza el uso de la senal de control u
+Q = diag([50, 1]); % [2x2]: peso 50 sobre x1, peso 1 sobre x2
+R = 0.1;           % escalar: penalizacion sobre u
 
 % -------------------------------------------------------------------------
-% RESTRICCIONES (limites fisicos del sistema)
+% LIMITES FISICOS DEL SISTEMA
 % -------------------------------------------------------------------------
-umax  = 100; % Limite maximo/minimo del actuador: -umax <= u <= umax
-x1max = 100; % Limite maximo/minimo para el estado x1
-x2max = 100; % Limite maximo/minimo para el estado x2
+umax  = 100; % -umax <= u_k <= umax
+x1max = 100; % -x1max <= x1_k <= x1max
+x2max = 100; % -x2max <= x2_k <= x2max
 
 % =========================================================================
-% CONSTRUCCION DE LA MATRIZ HESSIANA H (funcion de costo cuadratica)
+% HESSIANA H [nz x nz] — construida con indexacion directa (sin cell arrays)
 %
-% La funcion de costo es: J = z'*H*z + f'*z
-% H tiene bloques diagonales: R para cada u_k, Q para cada x_k
+% Estructura diagonal por bloques:
+%   Posiciones 1..N         -> bloques escalares 2*R  (coste de control)
+%   Posiciones N+1..N+N*nx  -> bloques 2*Q [2x2]     (coste de estados)
 %
-% blkdiag construye la diagonal por bloques automaticamente con N bloques
-% de R y N bloques de Q, sin importar el valor de N.
+% La construccion usa preallocacion + asignacion por indice para que
+% Simulink pueda inferir el tamano [nz x nz] en analisis estatico.
 % =========================================================================
+H = zeros(nz, nz); % Preallocacion: Simulink infiere tamano [3N x 3N]
 
-% Bloques de R (uno por cada control u_0, u_1, ..., u_{N-1})
-R_blocks = repmat({R}, 1, N); % Crea un cell array {R, R, ..., R} de N elementos
-
-% Bloques de Q (uno por cada estado x_1, x_2, ..., x_N)
-Q_blocks = repmat({Q}, 1, N); % Crea un cell array {Q, Q, ..., Q} de N elementos
-
-% H = 2 * diag([R,...,R, Q,...,Q]) -> factor 2 por la derivada de z'Hz
-H = 2 * blkdiag(R_blocks{:}, Q_blocks{:}); % Tamano: [nz x nz]
-
-% =========================================================================
-% CONSTRUCCION DEL VECTOR LINEAL f (gradiente de la funcion de costo)
-%
-% Parte de u: f_u = 0 porque no penalizamos el valor absoluto de u,
-%             solo su magnitud via R en H.
-% Parte de x: f_x = -2*Q*r repetido N veces (queremos que x_k se acerque a r)
-% =========================================================================
-f_u = zeros(N * nu, 1);        % Vector de ceros para los N controles [N x 1]
-f_x = repmat(-2 * Q * r, N, 1); % Penaliza la distancia de x_k a r en cada paso [N*nx x 1]
-f   = [f_u; f_x];               % Vector completo de costo lineal [nz x 1]
-
-% =========================================================================
-% RESTRICCIONES DE IGUALDAD: Aeq * z = beq
-% Codifican la dinamica del sistema: x_{k+1} = Ad*x_k + Bd*u_k
-% Reescrito como: -Bd*u_k + x_{k+1} - Ad*x_k = 0 (para k=1..N-1)
-%               y -Bd*u_0 + x_1 = Ad*x0          (para k=0, condicion inicial)
-%
-% El vector z = [u_0;...;u_{N-1}; x_1;...;x_N]
-% Por eso Aeq se divide en dos bloques:
-%   Aeq_u: multiplica a los controles (columnas de u)
-%   Aeq_x: multiplica a los estados   (columnas de x)
-% =========================================================================
-
-I = eye(nx);   % Identidad [nx x nx] = [2x2]
-Z = zeros(nx); % Ceros    [nx x nx] = [2x2]
-
-% --- Bloque Aeq_u: cada fila k tiene -Bd en la posicion de u_k ---
-% Construimos una lista de celdas para blkdiag
-Bd_blocks = repmat({-Bd}, 1, N); % {-Bd, -Bd, ..., -Bd} con N elementos
-Aeq_u = blkdiag(Bd_blocks{:}); % Matriz diagonal por bloques [N*nx x N*nu]
-
-% --- Bloque Aeq_x: representa la cadena de dinamica entre estados ---
-% Fila 1: [I,  Z,  Z, ..., Z ]  => x_1 aparece sola (sin x_0 porque x_0 = x actual)
-% Fila 2: [-Ad, I,  Z, ..., Z ]  => x_2 - Ad*x_1 = 0
-% Fila k: [0...0, -Ad, I, 0..0]  => x_{k+1} - Ad*x_k = 0
-%
-% Se construye fila a fila: cada fila de bloques [nx x N*nx]
-Aeq_x = zeros(N * nx, N * nx); % Preallocate para eficiencia
+% Bloques de control: H(k,k) = 2*R para k = 1..N
 for k = 1:N
-    row_start = (k-1)*nx + 1; % Inicio de la fila k (en bloques de nx)
-    col_I     = (k-1)*nx + 1; % Columna donde va la identidad I (estado x_k)
+    H(k, k) = 2 * R; % Cada control u_k contribuye 2*R en la diagonal
+end
 
-    % Colocamos la identidad I en la diagonal (corresponde a x_k)
-    Aeq_x(row_start:row_start+nx-1, col_I:col_I+nx-1) = I;
+% Bloques de estado: H(bloque_k, bloque_k) = 2*Q para k = 1..N
+for k = 1:N
+    % Indice de inicio del bloque de estado k en z (despues de los N controles)
+    idx = N*nu + (k-1)*nx + 1;
+    H(idx:idx+nx-1, idx:idx+nx-1) = 2 * Q; % Bloque [2x2] en la diagonal
+end
 
-    % Colocamos -Ad una columna de bloques a la izquierda (corresponde a x_{k-1})
-    % Solo aplica desde la fila 2 en adelante (fila 1 no tiene x_{k-1} = x_0)
+% =========================================================================
+% VECTOR LINEAL f [nz x 1]
+%
+% f_u = 0 (no penalizamos valor absoluto de u, solo su magnitud via H)
+% f_x = -2*Q*r repetido N veces (atrae cada x_k hacia la referencia r)
+% =========================================================================
+f = zeros(nz, 1); % Preallocacion: primeros N elementos quedan en cero (f_u=0)
+
+Qr = -2 * Q * r;  % Producto [-2*Q*r], calculado una sola vez fuera del loop [2x1]
+for k = 1:N
+    % Indice de inicio del bloque de estado k en f
+    idx = N*nu + (k-1)*nx + 1;
+    f(idx:idx+nx-1) = Qr; % Copiamos -2*Q*r en la posicion del estado k
+end
+
+% =========================================================================
+% RESTRICCIONES DE IGUALDAD: Aeq [N*nx x nz]  y  beq [N*nx x 1]
+%
+% Codifican la dinamica: x_{k+1} = Ad*x_k + Bd*u_k para k=0..N-1
+% Reescrito para el QP:
+%   Fila k=1:  -Bd*u_0 +         x_1              = Ad*x   (condicion inicial)
+%   Fila k>1:  -Bd*u_k - Ad*x_{k-1} + x_k         = 0
+%
+% Aeq se divide en dos bloques horizontales:
+%   Aeq_u [N*nx x N*nu]: coeficientes de los controles u_k
+%   Aeq_x [N*nx x N*nx]: coeficientes de los estados  x_k
+% =========================================================================
+nrows_eq = N * nx; % Numero de filas de Aeq = numero de ecuaciones de dinamica
+
+% --- Bloque Aeq_u: diagonal de -Bd, una por cada u_k ---
+Aeq_u = zeros(nrows_eq, N*nu); % Preallocacion [2N x N]
+for k = 1:N
+    row = (k-1)*nx + 1; % Fila de inicio del bloque k
+    col = (k-1)*nu + 1; % Columna de inicio del bloque k (nu=1 => columna k)
+    Aeq_u(row:row+nx-1, col:col+nu-1) = -Bd; % Coloca -Bd en la diagonal de bloques
+end
+
+% --- Bloque Aeq_x: I en la diagonal, -Ad en la subdiagonal de bloques ---
+Aeq_x = zeros(nrows_eq, N*nx); % Preallocacion [2N x 2N]
+for k = 1:N
+    row = (k-1)*nx + 1; % Fila de inicio del bloque k
+    col = (k-1)*nx + 1; % Columna de la identidad I (corresponde a x_k)
+
+    Aeq_x(row:row+nx-1, col:col+nx-1) = eye(nx); % I en la diagonal principal
+
+    % -Ad en la subdiagonal (conecta x_k con x_{k-1}); no aplica para k=1
     if k > 1
-        col_Ad = (k-2)*nx + 1; % Columna donde va -Ad (estado x_{k-1})
-        Aeq_x(row_start:row_start+nx-1, col_Ad:col_Ad+nx-1) = -Ad;
+        col_ad = (k-2)*nx + 1; % Columna de x_{k-1}
+        Aeq_x(row:row+nx-1, col_ad:col_ad+nx-1) = -Ad;
     end
 end
 
-% Ensamblamos Aeq combinando los bloques de u y x horizontalmente
-Aeq = [Aeq_u, Aeq_x]; % Tamano: [N*nx x nz]
+% Ensamblado final de Aeq y beq
+Aeq = [Aeq_u, Aeq_x]; % [N*nx x nz] = [2N x 3N]
 
-% --- Vector beq: lado derecho de las restricciones de igualdad ---
-% La primera ecuacion es: -Bd*u_0 + x_1 = Ad*x  (condicion inicial conocida)
-% Las demas ecuaciones son: x_{k+1} - Ad*x_k = 0
-beq = [Ad * x; zeros((N-1)*nx, 1)]; % [N*nx x 1]
-
-% =========================================================================
-% RESTRICCIONES DE DESIGUALDAD: Ain*z <= bin  (vacias en este caso)
-% Los limites se imponen directamente via lb y ub (mas eficiente para QP)
-% =========================================================================
-Ain = []; % Sin restricciones de desigualdad generales
-bin = [];
+% beq: primera ecuacion usa la condicion inicial Ad*x; el resto son ceros
+beq = zeros(nrows_eq, 1);           % Preallocacion [2N x 1]
+beq(1:nx) = Ad * x;                 % Solo el primer bloque conoce el estado inicial
 
 % =========================================================================
-% LIMITES (BOUNDS) DEL VECTOR DE DECISION z = [u_0;...;u_{N-1}; x_1;...;x_N]
+% RESTRICCIONES DE DESIGUALDAD (vacias — los limites van en lb/ub)
+% =========================================================================
+Ain = zeros(0, nz); % Matriz vacia pero con numero de columnas conocido
+bin = zeros(0, 1);  % Vector vacio compatible
+
+% =========================================================================
+% LIMITES DEL VECTOR DE DECISION: lb <= z <= ub
 %
-% lb <= z <= ub
-% Se construyen repitiendo los limites individuales N veces automaticamente
+% Construidos con preallocacion + loop para compatibilidad con Simulink.
 % =========================================================================
+lb = zeros(nz, 1); % Preallocacion
+ub = zeros(nz, 1); % Preallocacion
 
-% Limites para los controles: -umax <= u_k <= umax para k=0..N-1
-lb_u = repmat(-umax, N * nu, 1);  % Vector [-umax; ...; -umax] de N elementos
-ub_u = repmat( umax, N * nu, 1);  % Vector [ umax; ...; umax]  de N elementos
+% Limites de control: posiciones 1..N
+for k = 1:N
+    lb(k) = -umax;
+    ub(k) =  umax;
+end
 
-% Limites para cada estado en cada paso: [x1min; x2min] y [x1max; x2max]
-lim_x_min = [-x1max; -x2max]; % Limite inferior para un paso [nx x 1]
-lim_x_max = [ x1max;  x2max]; % Limite superior para un paso [nx x 1]
-
-% Repetimos los limites de estado N veces (uno por cada paso del horizonte)
-lb_x = repmat(lim_x_min, N, 1); % [N*nx x 1]
-ub_x = repmat(lim_x_max, N, 1); % [N*nx x 1]
-
-% Concatenamos limites de control y estados
-lb = [lb_u; lb_x]; % Limite inferior total [nz x 1]
-ub = [ub_u; ub_x]; % Limite superior total [nz x 1]
+% Limites de estado: posiciones N+1..nz, agrupados en bloques de nx
+lim_min = [-x1max; -x2max]; % Limites inferiores para un paso [2x1]
+lim_max = [ x1max;  x2max]; % Limites superiores para un paso [2x1]
+for k = 1:N
+    idx = N*nu + (k-1)*nx + 1; % Inicio del bloque de estado k
+    lb(idx:idx+nx-1) = lim_min;
+    ub(idx:idx+nx-1) = lim_max;
+end
 
 % =========================================================================
-% RESOLUCION DEL PROBLEMA DE OPTIMIZACION CUADRATICA (QP)
+% RESOLUCION DEL QP
 %   min   0.5 * z'*H*z + f'*z
 %   s.t.  Aeq*z = beq
 %         lb <= z <= ub
 % =========================================================================
-
-z0 = zeros(nz, 1); % Punto inicial para el solver (se puede mejorar con warm-start)
+z0 = zeros(nz, 1); % Punto de arranque del solver
 
 options = optimoptions('quadprog', ...
-    'Algorithm', 'active-set', ... % Metodo activo: eficiente para problemas QP pequenos
-    'Display',   'off');           % Sin mensajes en consola durante la simulacion
+    'Algorithm', 'active-set', ... % Activo: rapido para QP de tamano moderado
+    'Display',   'off');           % Sin mensajes en consola
 
-% Llamada al solver: z contiene [u_0; u_1; ...; u_{N-1}; x_1; ...; x_N]
 z = quadprog(H, f, Ain, bin, Aeq, beq, lb, ub, z0, options);
 
 % -------------------------------------------------------------------------
-% LEY DE CONTROL: aplicamos SOLO el primer control u_0 (principio de MPC)
-% Los controles u_1..u_{N-1} se descartan; en el proximo instante
-% se re-optimiza todo el horizonte con el nuevo estado medido.
+% LEY DE CONTROL RECEDING-HORIZON: aplicar solo u_0
+%   u_1..u_{N-1} se descartan; en el proximo ciclo se re-optimiza todo
+%   el horizonte con el nuevo estado medido (principio fundamental del MPC).
 % -------------------------------------------------------------------------
-u = z(1); % Primera componente del vector de decision = u_0
+u = z(1); % u_0 es la primera componente de z
