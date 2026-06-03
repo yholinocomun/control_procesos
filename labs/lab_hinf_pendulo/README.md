@@ -7,10 +7,30 @@ comparativas y métricas.
 
 ## Archivos
 
-- `control_hinf_pendulo.m` — script MATLAB autocontenido (Control System +
-  Robust Control Toolbox). Genera todas las gráficas y métricas.
+- `control_hinf_pendulo.m` — script MATLAB autocontenido. Genera todas las
+  gráficas y métricas.
 - `images/hinf_step_compare_ref.png` — figura de referencia de la respuesta al
   escalón de los 4 casos (generada en validación).
+
+## Requisitos (importante)
+
+**Solo necesita la Control System Toolbox** (`tf`, `ss`, `feedback`, `step`,
+`margin`, `stepinfo`, `c2d`, …) + MATLAB base (`schur`, `ordschur`, `eig`).
+
+**No requiere la Robust Control Toolbox.** Las funciones `makeweight`, `augw` y
+`hinfsyn` (que pertenecen a esa toolbox) están reimplementadas como funciones
+locales al final del script:
+
+- `local_makeweight` — peso de primer orden con cruce a 0 dB en la frecuencia
+  indicada.
+- `local_augw` — planta generalizada de mezcla de sensibilidades S/KS/T.
+- `local_hinfsyn` — controlador central H∞ por el algoritmo de las **dos
+  ecuaciones de Riccati** (Doyle–Glover–Khargonekar–Francis), con bisección en
+  γ; las Riccati se resuelven por descomposición de **Schur** del Hamiltoniano.
+
+> Si dispone de la Robust Control Toolbox, puede sustituir las llamadas
+> `local_makeweight/local_augw/local_hinfsyn` por `makeweight/augw/hinfsyn`
+> (la sintaxis es equivalente) y borrar las funciones locales.
 
 ## La planta y por qué es difícil
 

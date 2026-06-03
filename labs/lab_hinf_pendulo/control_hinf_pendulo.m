@@ -5,8 +5,13 @@
 %  Diseno de mezcla de sensibilidades (mixed-sensitivity S/KS/T)
 %  para una planta INESTABLE (polo en el semiplano derecho).
 %
-%  Requiere: Control System Toolbox + Robust Control Toolbox
-%  Funciones clave: makeweight, augw, hinfsyn, feedback, stepinfo
+%  *** NO REQUIERE Robust Control Toolbox ***
+%  Solo usa Control System Toolbox (tf, ss, feedback, step, margin,
+%  stepinfo, c2d, ...) + MATLAB base (schur, ordschur, eig).
+%
+%  Las funciones makeweight / augw / hinfsyn de la Robust Control Toolbox
+%  se reimplementan al final del archivo como funciones locales:
+%      local_makeweight, local_augw, local_hinfsyn
 %
 %  Estructura del archivo:
 %   1) Parametros fisicos del modelo
@@ -16,6 +21,7 @@
 %   5) Simulacion: respuesta al escalon y senal de control
 %   6) Variacion de parametros (4 casos) y graficas comparativas
 %   7) Discretizacion del controlador
+%   8) Funciones locales (makeweight, augw, hinfsyn, riccati)
 % ============================================================
 
 clear; clc; close all;
@@ -83,22 +89,22 @@ fprintf('    las ponderaciones se colocan con cruce ~1000-3000 rad/s (NO ~1 rad/
 %         modelada y ruido), por eso W3 tiene GANANCIA ALTA en alta
 %         frecuencia.
 %
-%  Sintaxis: makeweight(gananciaBaja, frecCruce, gananciaAlta)
-%    -> el segundo argumento (escalar) es la frecuencia de cruce a 0 dB.
+%  Sintaxis (local): local_makeweight(gananciaBaja, frecCruce, gananciaAlta)
+%    -> el segundo argumento es la frecuencia de cruce a 0 dB.
 %
 %  *** Clave para esta planta ***: el cruce de W1 (ancho de banda exigido)
 %  se coloca por ENCIMA del polo inestable (~434 rad/s).
 % ---------------------------------------------------------------------
 
-W1 = makeweight(100, 1000, 0.01);   % S: alta ganancia DC -> buen seguimiento
-W2 = 0.05;                          % KS: penaliza (poco) el esfuerzo de control
-W3 = makeweight(0.01, 2500, 100);   % T: alta ganancia en alta frec -> robustez
+W1 = local_makeweight(100, 1000, 0.01);   % S: alta ganancia DC -> seguimiento
+W2 = 0.05;                                 % KS: penaliza (poco) el control
+W3 = local_makeweight(0.01, 2500, 100);    % T: alta ganancia alta frec -> robustez
 
 % Planta generalizada (aumentada con las ponderaciones)
-P = augw(Gp, W1, W2, W3);
+P = local_augw(Gp, W1, W2, W3);
 
 % Sintesis H-infinito:  1 medida (error), 1 control (voltaje)
-[Sc, CL, gamma] = hinfsyn(P, 1, 1);
+[Sc, gamma] = local_hinfsyn(P, 1, 1);
 Gc = minreal(tf(Sc));               % controlador como funcion de transferencia
 
 fprintf('================ CONTROLADOR NOMINAL ================\n');
@@ -110,7 +116,7 @@ disp('Controlador Gc(s):'); disp(zpk(Gc));
 %  4) VERIFICACION DE ESTABILIDAD Y MARGENES
 % ============================================================
 L  = Gp*Gc;                 % lazo abierto compensado
-T  = feedback(L, 1);        % lazo cerrado r -> theta  (= sensibilidad complementaria)
+T  = feedback(L, 1);        % lazo cerrado r -> theta  (= sens. complementaria)
 Su = feedback(1, L);        % sensibilidad S
 KS = feedback(Gc, Gp);      % r -> u  (senal de control = K*S)
 
@@ -155,9 +161,6 @@ fprintf('  Error estacionario = %.4g\n', abs(1 - dcgain(T)));
 %% ============================================================
 %  6) VARIACION DE PARAMETROS  (4 casos comparados)
 % ============================================================
-%  Definimos cada caso por su terna de ponderaciones. Reutilizamos el
-%  mismo flujo augw -> hinfsyn para todos.
-%
 %  Caso 1 (nominal): equilibrio seguimiento/robustez.
 %  Caso 2: W1 con MAYOR ganancia DC  -> fuerza menor error estacionario
 %          (pero, por la limitacion del polo inestable, AUMENTA el
@@ -168,13 +171,13 @@ fprintf('  Error estacionario = %.4g\n', abs(1 - dcgain(T)));
 % ---------------------------------------------------------------------
 
 casos(1) = struct('nombre','Caso 1 (nominal)', ...
-    'W1',makeweight(100,1000,0.01), 'W2',0.05, 'W3',makeweight(0.01,2500,100));
+    'W1',local_makeweight(100,1000,0.01), 'W2',0.05, 'W3',local_makeweight(0.01,2500,100));
 casos(2) = struct('nombre','Caso 2 (W1 DC=500)', ...
-    'W1',makeweight(500,1000,0.01), 'W2',0.05, 'W3',makeweight(0.01,2500,100));
+    'W1',local_makeweight(500,1000,0.01), 'W2',0.05, 'W3',local_makeweight(0.01,2500,100));
 casos(3) = struct('nombre','Caso 3 (W3 robusta, wc=1200)', ...
-    'W1',makeweight(100,1000,0.01), 'W2',0.05, 'W3',makeweight(0.01,1200,100));
+    'W1',local_makeweight(100,1000,0.01), 'W2',0.05, 'W3',local_makeweight(0.01,1200,100));
 casos(4) = struct('nombre','Caso 4 (BW amplio wc=2000)', ...
-    'W1',makeweight(100,2000,0.01), 'W2',0.05, 'W3',makeweight(0.01,4000,100));
+    'W1',local_makeweight(100,2000,0.01), 'W2',0.05, 'W3',local_makeweight(0.01,4000,100));
 
 colores = lines(numel(casos));
 
@@ -185,8 +188,8 @@ fprintf('\n================ COMPARACION DE CASOS ================\n');
 fprintf('%-30s %8s %10s %8s %10s\n','Caso','gamma','tr[ms]','OS[%]','ess');
 
 for k = 1:numel(casos)
-    Pk = augw(Gp, casos(k).W1, casos(k).W2, casos(k).W3);
-    [Sck, ~, gk] = hinfsyn(Pk, 1, 1);
+    Pk = local_augw(Gp, casos(k).W1, casos(k).W2, casos(k).W3);
+    [Sck, gk] = local_hinfsyn(Pk, 1, 1);
     Gck = minreal(tf(Sck));
 
     Tk  = feedback(Gp*Gck, 1);     % r -> theta
@@ -234,3 +237,154 @@ fprintf('\n================ CONTROLADOR DISCRETO (Ts=%.3g s) ================\n'
 disp(tf(Gc_d));
 
 fprintf('\n[OK] Ejecucion completa. Revise las figuras generadas.\n');
+
+
+%% ============================================================
+%  8) FUNCIONES LOCALES  (reemplazan a la Robust Control Toolbox)
+% ============================================================
+
+function W = local_makeweight(dcgain, wc, hfgain)
+%LOCAL_MAKEWEIGHT  Peso de primer orden equivalente a makeweight.
+%   |W(0)| = dcgain, |W(Inf)| = hfgain, |W(j*wc)| = 1 (cruce a 0 dB).
+%   W(s) = (hfgain*s + wb*dcgain) / (s + wb)
+%   con wb elegido para que el cruce este exactamente en wc.
+    wb = wc * sqrt((1 - hfgain^2) / (dcgain^2 - 1));
+    W  = tf([hfgain, wb*dcgain], [1, wb]);
+end
+
+
+function P = local_augw(G, W1, W2, W3)
+%LOCAL_AUGW  Planta generalizada de mezcla de sensibilidades (= augw).
+%   Entradas:  [w ; u]      (referencia/perturbacion ; control)
+%   Salidas :  [z1; z2; z3; v]
+%       z1 = W1*(w - G*u) = W1*S*w      (sensibilidad ponderada)
+%       z2 = W2*u         = W2*K*S*w    (esfuerzo de control ponderado)
+%       z3 = W3*G*u       = W3*T*w      (sens. complementaria ponderada)
+%       v  = w - G*u      = error (lo que mide el controlador)
+%
+%   Estructura por bloques:
+%        | W1   -W1*G |
+%   P =  | 0     W2   |
+%        | 0     W3*G |
+%        | 1    -G    |
+    G  = tf(G);  W1 = tf(W1);  W2 = tf(W2);  W3 = tf(W3);
+    z  = tf(0);  one = tf(1);
+    P  = [ W1,  -W1*G ;
+           z,    W2   ;
+           z,    W3*G ;
+           one, -G    ];
+    P  = minreal(ss(P));        % realizacion de estados (minima)
+end
+
+
+function [K, gam] = local_hinfsyn(P, nmeas, ncon)
+%LOCAL_HINFSYN  Controlador central H-infinito (sub)optimo (= hinfsyn).
+%   Algoritmo de las DOS ecuaciones de Riccati (Doyle-Glover-Khargonekar-
+%   Francis, 1989) con busqueda por biseccion en gamma. Resuelve las
+%   Riccati por descomposicion de Schur del Hamiltoniano (solo MATLAB base).
+%
+%   [K, gam] = local_hinfsyn(P, nmeas, ncon)
+%     P     : planta generalizada (ss)
+%     nmeas : numero de salidas medidas (ultimas filas de C)
+%     ncon  : numero de entradas de control (ultimas columnas de B)
+
+    P = ss(P);
+    A = P.A; B = P.B; C = P.C; D = P.D;
+    n  = size(A,1);  nm = nmeas;  nc = ncon;
+    nw = size(B,2) - nc;          nz = size(C,1) - nm;
+
+    B1  = B(:,1:nw);      B2  = B(:,nw+1:end);
+    C1  = C(1:nz,:);      C2  = C(nz+1:end,:);
+    D11 = D(1:nz,1:nw);   D12 = D(1:nz,nw+1:end);
+    D21 = D(nz+1:end,1:nw);
+
+    % Empaquetamos las matrices de la planta generalizada para pasarlas
+    % a la rutina del controlador central.
+    pg = struct('A',A,'B1',B1,'B2',B2,'C1',C1,'C2',C2, ...
+                'D11',D11,'D12',D12,'D21',D21, ...
+                'n',n,'nz',nz,'nw',nw,'nm',nm,'nc',nc);
+
+    % --- Biseccion en gamma ------------------------------------------
+    lo = 1; hi = 1e5; gam = NaN; K = [];
+    for it = 1:60
+        mid = sqrt(lo*hi);
+        [Kt, ok] = central(pg, mid);
+        if ok
+            hi = mid;  gam = mid;  K = Kt;     % factible -> bajar gamma
+        else
+            lo = mid;                          % infactible -> subir gamma
+        end
+    end
+    if isempty(K)
+        error('local_hinfsyn: no se encontro controlador factible. Ajuste W1/W2/W3.');
+    end
+end
+
+
+function [Kc, okf] = central(pg, g)
+%CENTRAL  Controlador central H-infinito para un gamma dado (o aviso de
+%   infactibilidad). Implementa las formulas de las dos Riccati (DGKF).
+    Kc = [];  okf = false;
+    A=pg.A; B1=pg.B1; B2=pg.B2; C1=pg.C1; C2=pg.C2;
+    D11=pg.D11; D12=pg.D12; D21=pg.D21;
+    n=pg.n; nz=pg.nz; nw=pg.nw; nm=pg.nm; nc=pg.nc;
+    g2 = g^2;
+    Dz1 = [D11, D12];     Bz = [B1, B2];
+
+    % Ecuacion de Riccati en X
+    R  = Dz1'*Dz1 - blkdiag(g2*eye(nw), zeros(nc));
+    if rcond(R) < 1e-12, return; end
+    Ri = inv(R);
+    Sx = C1'*Dz1;         Qx0 = C1'*C1;
+    Ax = A  - Bz*Ri*Sx';
+    Qx = Qx0 - Sx*Ri*Sx';
+    [X, okX] = ric_schur(Ax, Bz*Ri*Bz', Qx);
+    if ~okX, return; end
+
+    % Ecuacion de Riccati en Y (dual)
+    Dy = [D11; D21];      Cy = [C1; C2];
+    Rb = Dy*Dy' - blkdiag(g2*eye(nz), zeros(nm));
+    if rcond(Rb) < 1e-12, return; end
+    Rbi = inv(Rb);
+    Sy = B1*Dy';          Qy0 = B1*B1';
+    Ay = (A - Sy*Rbi*Cy)';
+    Qy = Qy0 - Sy*Rbi*Sy';
+    [Y, okY] = ric_schur(Ay, Cy'*Rbi*Cy, Qy);
+    if ~okY, return; end
+
+    % Condiciones de factibilidad H-infinito
+    if min(real(eig(X))) < -1e-6 || min(real(eig(Y))) < -1e-6, return; end
+    if max(abs(eig(X*Y))) >= g2, return; end     % rho(XY) < gamma^2
+
+    % Formulas del controlador central
+    R12 = D12'*D12;   R21 = D21*D21';
+    F   = -(R12) \ (B2'*X + D12'*C1);
+    Lg  = -(Y*C2' + B1*D21') / R21;
+    Z   =  inv(eye(n) - (1/g2)*Y*X);
+    Ahat = A + (1/g2)*B1*B1'*X + B2*F + Z*Lg*C2;
+
+    Kc  = ss(Ahat, -Z*Lg, F, zeros(nc,nm));
+    okf = true;
+end
+
+
+function [X, ok] = ric_schur(A, RBB, Q)
+%RIC_SCHUR  Solucion estabilizante de  A'X + X A - X*RBB*X + Q = 0.
+%   Via subespacio invariante estable del Hamiltoniano (Schur ordenado).
+    n = size(A,1);
+    H = [ A,   -RBB ;
+         -Q,   -A'  ];
+    ev = eig(H);
+    if sum(real(ev) < 0) ~= n          % debe haber n autovalores estables
+        X = []; ok = false; return;
+    end
+    [U, TT] = schur(H, 'real');
+    [U, ~ ] = ordschur(U, TT, 'lhp');  % estables (Re<0) arriba a la izquierda
+    U11 = U(1:n, 1:n);
+    U21 = U(n+1:2*n, 1:n);
+    if rcond(U11) < 1e-12
+        X = []; ok = false; return;
+    end
+    X  = real(U21 / U11);
+    ok = true;
+end
