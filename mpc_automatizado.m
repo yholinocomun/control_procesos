@@ -1,83 +1,84 @@
 function u = fcn(r, x)
-%% ========================================================================
-%  CONTROLADOR MPC AUTOMATIZADO
-%  ------------------------------------------------------------------------
-%  Lo ÚNICO que debes cambiar es N (horizonte de predicción).
-%  TODAS las matrices (H, f, Aeq, beq, lb, ub) se construyen solas
-%  a partir de N usando productos de Kronecker (kron).
-%
-%  Entradas:
-%     r : referencia [nx x 1]   (lo que quieres que sigan los estados)
-%     x : estado actual [nx x 1]
-%  Salida:
-%     u : acción de control a aplicar en este instante (escalar)
-% =========================================================================
 
-    % ===================== ÚNICO PARÁMETRO A CAMBIAR =====================
-    N = 5;                       %  <-- CAMBIA SOLO ESTE NÚMERO
-    % =====================================================================
+% Para que quadprog funcione dentro del bloque MATLAB Function de Simulink:
+coder.extrinsic('quadprog', 'optimoptions');
 
-    %% ---------------- MODELO DE LA PLANTA (Espacio de Estado) ----------
-    Ad = [ 1.0000  0.1903;
-           0       0.9048];
-    Bd = [ 0.0097;
-           0.0952];
+N = 5; % Horizonte de Prediccion   <-- CAMBIA SOLO ESTE NUMERO (1,2,3,...)
 
-    %% ---------------- PESOS DEL COSTO Y RESTRICCIONES ------------------
-    Q    = diag([10, 1]);        % castigo al error de cada estado
-    R    = 0.1;                  % castigo al esfuerzo de control
-    umax = 100;                  % |u|   <= umax
-    xmax = [100; 100];           % |x_i| <= xmax(i)   (un límite por estado)
+% Espacio de Estado de la Planta (Modelo)
+Ad = [ 1.0000 0.1903
+       0      0.9048];
 
-    %% ================= A PARTIR DE AQUÍ: TODO AUTOMÁTICO ===============
-    nx = size(Ad, 1);            % nº de estados   (se deduce solo)
-    nu = size(Bd, 2);            % nº de controles (se deduce solo)
+Bd = [ 0.0097
+       0.0952];
 
-    % --- Tamaños del vector de decisión z = [u(0..N-1) ; x(0..N-1)] ----
-    %     dim(z) = N*nu (controles) + N*nx (estados)
-    Iu = eye(N*nu);
-    Ix = eye(N*nx);
+% Ganancia de los Estados del LQR
+Q = diag([10, 1]);
+R = 0.1;
 
-    % --- Matriz Hessiana:  H = 2*blkdiag( I_N⊗R , I_N⊗Q ) --------------
-    H = 2 * blkdiag( kron(eye(N), R), kron(eye(N), Q) );
+% Restricciones
+umax = 100;
+x1max = 100;
+x2max = 100;
 
-    % --- Vector gradiente: controles sin término lineal; estados -2Qr --
-    f = [ zeros(N*nu, 1);
-          repmat(-2 * Q * r, N, 1) ];
+% Dimensiones del modelo (se deducen solas de Ad y Bd)
+nx = size(Ad, 1);   % numero de estados   (= 2)
+nu = size(Bd, 2);   % numero de controles (= 1)
 
-    % --- Restricciones de IGUALDAD (dinámica)  Aeq*z = beq -------------
-    %     Bloque de controles:  -B en la diagonal por bloques
-    Aeq_u = kron(eye(N), -Bd);                 % (N*nx) x (N*nu)
-    %     Bloque de estados:  I en la diagonal, -Ad en la subdiagonal
-    sub   = diag(ones(N-1, 1), -1);            % subdiagonal de unos
-    Aeq_x = kron(eye(N), eye(nx)) - kron(sub, Ad);   % (N*nx) x (N*nx)
-    Aeq   = [Aeq_u, Aeq_x];
-    %     Lado derecho: solo el primer bloque conoce la x actual
-    beq   = [ Ad * x;
-              zeros((N-1)*nx, 1) ];
+% Matrices en Base a la restriccion
+I = eye(nx);  % Identidad para los Estados
+Z = zeros(nx); % Zeros para los Estados
 
-    % --- Restricciones de DESIGUALDAD (no se usan aquí) ----------------
-    Ain = [];
-    bin = [];
+% Tiene N bloques de R (esfuerzo) y luego N bloques de Q (castigo al error).
+% blkdiag(R,R,...,Q,Q,...) se genera automaticamente con kron:
+H = 2 * blkdiag( kron(eye(N), R), kron(eye(N), Q) );
 
-    % --- Límites de caja  lb <= z <= ub --------------------------------
-    lb = [ repmat(-umax, N*nu, 1);
-           repmat(-xmax, N, 1) ];
-    ub = [ repmat( umax, N*nu, 1);
-           repmat( xmax, N, 1) ];
+% El vector r es un vector de 2x1 (la referencia para los 2 estados)
+% f debe tener tamano (N*nu + N*nx) x 1
+f_u = zeros(N*nu, 1);            % No penalizamos el valor absoluto de u
+f_x = repmat(-2 * Q * r, N, 1);  % Penalizamos la distancia de x a r en cada paso
+f = [f_u; f_x];
 
-    % --- Punto inicial -------------------------------------------------
-    z0 = zeros(N*nu + N*nx, 1);
+% Matrices Vacias
+Ain = [];
+bin = [];
 
-    %% ---------------- RESOLVER EL PROBLEMA CUADRÁTICO ------------------
-    options = optimoptions('quadprog', ...
-                           'Algorithm', 'active-set', ...
-                           'Display',   'off');
+% Bloque que multiplica a las u  ->  blkdiag(-Bd,-Bd,...,-Bd)  (N veces)
+Aeq_u = kron(eye(N), -Bd);
 
-    z = quadprog(H, f, Ain, bin, Aeq, beq, lb, ub, z0, options);
+% Bloque que multiplica a las x (conecta x_k con x_{k+1})
+% Es una matriz con Identidades en la diagonal y -Ad debajo de ellas.
+%   I  en la diagonal por bloques  ->  kron(eye(N), I)
+%  -Ad en la subdiagonal           -> -kron(diag(ones(N-1,1),-1), Ad)
+Aeq_x = kron(eye(N), I) - kron(diag(ones(N-1,1), -1), Ad);
 
-    %% ---------------- LEY DE CONTROL (horizonte recesivo) -------------
-    %  Aplica solo el primer control u(0) = z(1:nu)
-    u = z(1:nu);
-    u = u(1);     % escalar (caso de una sola entrada)
+Aeq = [Aeq_u, Aeq_x];
+
+% El vector beq. Solo el primer paso conoce la 'x' actual.
+beq = [Ad*x; zeros((N-1)*nx, 1)];
+
+% Repetimos los limites N veces
+lb_u = repmat(-umax, N*nu, 1);
+ub_u = repmat( umax, N*nu, 1);
+
+% Limites para los estados (repetidos para cada paso del horizonte)
+lim_x_min = [-x1max; -x2max];
+lim_x_max = [ x1max;  x2max];
+
+lb = [lb_u; repmat(lim_x_min, N, 1)];
+ub = [ub_u; repmat(lim_x_max, N, 1)];
+
+% Configuracion del MPC "quadprog"
+z0 = zeros(N*nu + N*nx, 1);   % (N ley de control + N*nx estados)
+
+% Pre-inicializa z con tamano fijo (necesario por usar quadprog extrinseco)
+z = zeros(N*nu + N*nx, 1);
+
+options = optimoptions('quadprog', 'Algorithm', 'active-set', 'Display', 'off');
+
+z = quadprog(H, f, Ain, bin, Aeq, beq, lb, ub, z0, options);
+
+% Ley de Control Actual
+u = z(1);
+
 end
