@@ -215,9 +215,11 @@ for k = 1:numel(casos)
 end
 
 figure(figStep);
-yline(1,'k--','LineWidth',0.8);
+hl = yline(1,'k--','LineWidth',0.8);     % referencia, fuera de la leyenda
+set(hl,'HandleVisibility','off');
 grid on; box on; xlabel('Tiempo [ms]'); ylabel('\theta (normalizado)');
 title('Respuesta al escalon en lazo cerrado - variacion de ponderaciones H\infty');
+ylim([-0.5 3.5]);
 legend('Location','best','FontSize',9);
 
 figure(figU);
@@ -304,19 +306,37 @@ function [K, gam] = local_hinfsyn(P, nmeas, ncon)
                 'D11',D11,'D12',D12,'D21',D21, ...
                 'n',n,'nz',nz,'nw',nw,'nm',nm,'nc',nc);
 
-    % --- Biseccion en gamma ------------------------------------------
-    lo = 1; hi = 1e5; gam = NaN; K = [];
+    % --- Fase 1: biseccion para hallar el gamma minimo factible ------
+    %  "Factible" = existen soluciones de Riccati validas Y el controlador
+    %  resultante ESTABILIZA INTERNAMENTE la planta generalizada (se verifica
+    %  con los autovalores del lazo cerrado, no solo con las condiciones de
+    %  Riccati: cerca del optimo el controlador central es fragil).
+    lo = 1; hi = 1e5; gmin = NaN;
     for it = 1:60
         mid = sqrt(lo*hi);
-        [Kt, ok] = central(pg, mid);
+        [~, ok] = central(pg, mid);
         if ok
-            hi = mid;  gam = mid;  K = Kt;     % factible -> bajar gamma
+            hi = mid;  gmin = mid;             % factible -> bajar gamma
         else
             lo = mid;                          % infactible -> subir gamma
         end
     end
-    if isempty(K)
+    if isnan(gmin)
         error('local_hinfsyn: no se encontro controlador factible. Ajuste W1/W2/W3.');
+    end
+
+    % --- Fase 2: relajar gamma para un controlador bien condicionado --
+    %  Disenar exactamente en gmin da un controlador al borde de la
+    %  singularidad (Z = inv(I - Y*X/gamma^2) casi singular). Relajamos
+    %  gamma un 15 % para ganar robustez/condicionamiento numerico.
+    relax = 1.15;
+    gam = relax*gmin;
+    [K, ok] = central(pg, gam);
+    if ~ok                                     % margen extra si hiciera falta
+        gam = 1.30*gmin;  [K, ok] = central(pg, gam);
+    end
+    if ~ok || isempty(K)
+        error('local_hinfsyn: fallo al reconstruir el controlador relajado.');
     end
 end
 
@@ -361,9 +381,21 @@ function [Kc, okf] = central(pg, g)
     F   = -(R12) \ (B2'*X + D12'*C1);
     Lg  = -(Y*C2' + B1*D21') / R21;
     Z   =  inv(eye(n) - (1/g2)*Y*X);
-    Ahat = A + (1/g2)*B1*B1'*X + B2*F + Z*Lg*C2;
+    Ak  = A + (1/g2)*B1*B1'*X + B2*F + Z*Lg*C2;
+    Bk  = -Z*Lg;
+    Ck  = F;
 
-    Kc  = ss(Ahat, -Z*Lg, F, zeros(nc,nm));
+    % --- Verificacion de ESTABILIDAD INTERNA del lazo cerrado --------
+    %  Acl = matriz de estados del lazo (planta generalizada + controlador,
+    %  con Dk = 0 y D22 = 0). Si algun autovalor no es estable, este gamma
+    %  NO es valido aunque las Riccati "pasen".
+    Acl = [A,      B2*Ck ;
+           Bk*C2,  Ak    ];
+    if max(real(eig(Acl))) >= -1e-9
+        return;
+    end
+
+    Kc  = ss(Ak, Bk, Ck, zeros(nc,nm));
     okf = true;
 end
 
